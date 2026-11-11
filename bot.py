@@ -2,8 +2,8 @@ import os
 import psycopg2
 from telegram.ext import ApplicationBuilder, CommandHandler
 
-DB_URL = os.environ["postgresql://neondb_owner:npg_Zb9za3WxFDYf@ep-polished-bar-bdrvi4lj-pooler.c-8.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"]
-TOKEN = os.environ["9102213823:AAGW713M0qZhJEbk29g2mc0SiJN36RSSu2I"]
+DB_URL = os.environ["DATABASE_URL"]
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 def get_conn():
     return psycopg2.connect(DB_URL)
