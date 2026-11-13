@@ -10,8 +10,12 @@ from telegram.ext import (
 DB_URL = os.environ.get("DATABASE_URL")
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# Conversation အဆင့်တွေ
-ASK_NAME, ASK_AMOUNT, ASK_ITEM, ASK_QTY, ASK_DATE, ASK_PAY_NAME, ASK_PAY_ITEM, ASK_PAY_QTY, ASK_PAY_AMT, ASK_SEARCH = range(10)
+# Conversation အဆင့်တွေ (အားလုံးကို စနစ်တကျ သတ်မှတ်ထားပါတယ်)
+(
+    ASK_NAME, ASK_AMOUNT, ASK_ITEM, ASK_QTY, ASK_DATE,
+    ASK_PAY_NAME, ASK_PAY_ITEM, ASK_PAY_QTY, ASK_PAY_AMT, ASK_SEARCH
+) = range(10)
+
 def get_conn():
     return psycopg2.connect(DB_URL)
 
@@ -19,13 +23,13 @@ def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("📝 အကြွေးအသစ်ထည့်မည်", callback_data='new_debt')],
         [InlineKeyboardButton("💰 ရှင်းငွေထည့်မည်", callback_data='new_payment')],
-        [InlineKeyboardButton("🔍 အမည်ဖြင့်ရှာမည်", callback_data='search_customer')],
+        [InlineKeyboardButton("🔍 လူအမည်ဖြင့်ရှာမည်", callback_data='search_customer')],
         [InlineKeyboardButton("📊 စုစုပေါင်းစာရင်း", callback_data='total_summary')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "DedtNoteမှ ကြိုဆိုပါတယ်။ ဘာလုပ်ဆောင်ချင်ပါသလဲ?"
+    text = "DebtNoteမှ ကြိုဆိုပါတယ်။ ဘာလုပ်ဆောင်ချင်ပါသလဲ?"
     if update.message:
         await update.message.reply_text(text, reply_markup=get_main_menu())
     else:
@@ -41,7 +45,6 @@ async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("ဝယ်သူ/အကြွေးရှင်ရဲ့ **အမည်** ကို ရိုက်ထည့်ပါ -", parse_mode='Markdown')
         return ASK_NAME
     else:
-        # ရှင်းငွေအတွက် နာမည် မေးမယ်
         await query.edit_message_text("ရှင်းငွေဆပ်မယ့် သူရဲ့ **အမည်** ကို ရိုက်ထည့်ပါ -", parse_mode='Markdown')
         return ASK_PAY_NAME
 
@@ -80,17 +83,12 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
-        # ဖုန်းရဲ့ ရက်စွဲကို ယူမယ် (Server မဟုတ်ဘဲ ဖုန်းရဲ့ local time ကို ရအောင် ကြိုးစားမယ်)
-        # မှတ်ချက် - Bot က ဖုန်းရဲ့ time ကို တိုက်ရိုက်မမြင်နိုင်ပါဘူး။ ဒါကြောင့် ဖုန်းက ပို့လိုက်တဲ့ အချိန်ကို သုံးပါမယ်။
+        # ဖုန်းရဲ့ ရက်စွဲကို ယူမယ်
         context.user_data['date'] = datetime.now().strftime("%d.%m.%Y")
         await update.callback_query.edit_message_text("ရက်စွဲကို ယူပြီးပါပြီ။")
     else:
         context.user_data['date'] = update.message.text
 
-    await save_debt(update, context)
-    return ConversationHandler.END
-
-async def save_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     conn = get_conn()
     cur = conn.cursor()
@@ -108,6 +106,7 @@ async def save_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"✅ {data['name']} အတွက် အကြွေး {data['amount']} ကျပ် သိမ်းဆည်းပြီးပါပြီ။\n"
     await update.effective_chat.send_message(msg, reply_markup=get_main_menu())
     context.user_data.clear()
+    return ConversationHandler.END
 
 # ================== ရှင်းငွေ ထည့်ခြင်း ==================
 
@@ -117,7 +116,6 @@ async def ask_pay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = get_conn()
     cur = conn.cursor()
-    # အဲဒီလူရဲ့ ကျန်နေတဲ့ အကြွေးပစ္စည်းတွေကို ဆွဲထုတ်မယ်
     cur.execute(
         """SELECT id, item_name, quantity, amount FROM debts 
            WHERE chat_id=%s AND customer_name ILIKE %s AND type='credit' AND amount > 0""",
@@ -133,7 +131,6 @@ async def ask_pay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     for r in rows:
-        # ခလုတ်စာသား - ပစ္စည်း (အရေအတွက်) - ပမာဏ
         btn_text = f"{r[1] or 'အကြွေး'} ({r[2] or '-'}) - {r[3]} ကျပ်"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"pay_{r[0]}")])
     
@@ -151,7 +148,6 @@ async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     debt_id = int(query.data.split('_')[1])
     context.user_data['pay_id'] = debt_id
     
-    # အဲဒီ voucher ရဲ့ အချက်အလက်ကို ဆွဲထုတ်မယ်
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT item_name, quantity, amount FROM debts WHERE id=%s", (debt_id,))
@@ -189,7 +185,6 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     debt_id = data['pay_id']
     
-    # ဖုန်းရဲ့ ရက်စွဲကို ယူမယ်
     today_date = datetime.now().strftime("%d.%m.%Y")
     
     conn = get_conn()
@@ -278,7 +273,6 @@ async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_conn()
     cur = conn.cursor()
     
-    # လူတစ်ယောက်ချင်းစီရဲ့ စုစုပေါင်း ကျန်ရှိနေတဲ့ အကြွေး (amount > 0) ကိုပဲ ယူမယ်
     cur.execute("""
         SELECT customer_name, SUM(amount) as total_balance
         FROM debts 
@@ -344,4 +338,5 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(conv_handler)
 app.add_handler(CallbackQueryHandler(total_summary, pattern='^total_summary$'))
 
-app.run_polling()
+if __name__ == '__main__':
+    app.run_polling()
