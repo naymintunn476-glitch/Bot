@@ -151,7 +151,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     text = (
-        "🏪 Debt Ledger Bot မှ ကြိုဆိုပါတယ်။\n\n"
+        "🏪 DebtNote Bot မှ ကြိုဆိုပါတယ်။\n\n"
         "လုပ်ဆောင်လိုတာကို ရွေးချယ်ပါ။"
     )
 
