@@ -1,6 +1,7 @@
 import os
 import psycopg2
 from datetime import datetime
+from decimal import Decimal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -40,7 +41,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data.clear() # အဟောင်းတွေ ရှင်းမယ်
+    context.user_data.clear()
     
     if query.data == 'new_debt':
         await query.edit_message_text("ဝယ်သူ/အကြွေးရှင်ရဲ့ **အမည်** ကို ရိုက်ထည့်ပါ -", parse_mode='Markdown')
@@ -161,8 +162,9 @@ async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur.close()
         conn.close()
         
+        # Database က Decimal ပြန်ပေးတာကို Float ပြောင်းသိမ်းမယ်
         context.user_data['pay_item_name'] = row[0]
-        context.user_data['pay_old_qty'] = row[1] if row[1] is not None else 0
+        context.user_data['pay_old_qty'] = int(row[1]) if row[1] is not None else 0
         context.user_data['pay_old_amt'] = float(row[2])
         
         text = f"ရွေးထားတဲ့ အကြွေး - {row[0] or 'အကြွေး'} (လက်ကျန် {row[1] or '-'} / {row[2]} ကျပ်)\n\n"
@@ -206,9 +208,9 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (update.effective_chat.id, data['pay_name'], pay_amt, data['pay_item_name'], today_date)
         )
         
-        # မူလအကြွေးထဲကနေ နုတ်မယ်
-        old_amt = data['pay_old_amt']
-        old_qty = data['pay_old_qty']
+        # မူလအကြွေးထဲကနေ နုတ်မယ် (Decimal နဲ့ Float မှားမှာ စိုးလို့ float() ဖုံးထားတယ်)
+        old_amt = float(data['pay_old_amt'])
+        old_qty = int(data['pay_old_qty'])
         
         new_amt = old_amt - pay_amt
         new_qty = old_qty - data['pay_qty']
@@ -305,7 +307,7 @@ async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         grand_total = 0
         for r in rows:
             name = r[0]
-            balance = r[1]
+            balance = float(r[1]) # Decimal ကနေ Float ပြောင်းမယ်
             grand_total += balance
             text += f"👤 {name}: {balance} ကျပ်\n"
                 
