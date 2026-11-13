@@ -1,7 +1,6 @@
 import os
 import psycopg2
 from datetime import datetime
-from decimal import Decimal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -208,7 +207,7 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (update.effective_chat.id, data['pay_name'], pay_amt, data['pay_item_name'], today_date)
         )
         
-        # မူလအကြွေးထဲကနေ နုတ်မယ် (Decimal နဲ့ Float မှားမှာ စိုးလို့ float() ဖုံးထားတယ်)
+        # မူလအကြွေးထဲကနေ နုတ်မယ် (Decimal Error မတက်အောင် float() သေချာဖုံးထားတယ်)
         old_amt = float(data['pay_old_amt'])
         old_qty = int(data['pay_old_qty'])
         
