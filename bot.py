@@ -779,9 +779,6 @@ async def search_customer(update, context):
 
     await query.edit_message_text(
         "🔍 ရှာလိုသော အကြွေးရှင်၏ အမည်အပြည့်အစုံကို ရိုက်ထည့်ပါ။\n\n"
-        "ဥပမာ - Nay Min Tun\n\n"
-        "Nay သို့မဟုတ် Min တစ်လုံးတည်းဖြင့် "
-        "ရှာဖွေ၍မရပါ။"
     )
 
     return ASK_SEARCH
