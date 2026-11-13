@@ -104,7 +104,7 @@ def get_main_menu():
 
         [
             InlineKeyboardButton(
-                "📝 အကြွေးအသစ်ထည့်မည်",
+                "📝 အကြွေးထည့်မည်",
                 callback_data="new_debt"
             )
         ],
@@ -118,7 +118,7 @@ def get_main_menu():
 
         [
             InlineKeyboardButton(
-                "🔍 လူအမည်ဖြင့်ရှာမည်",
+                "🔍 အမည်ဖြင့်ရှာမည်",
                 callback_data="search_customer"
             )
         ],
@@ -938,7 +938,7 @@ async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text += (
             "━━━━━━━━━━━━━━━━\n"
-            f"💰 စုစုပေါင်း ရရန်ကျန်: "
+            f"💰 စုစုပေါင်း ရရန်ကျန်ငွေ: "
             f"{format_money(grand_total)} ကျပ်"
         )
 
