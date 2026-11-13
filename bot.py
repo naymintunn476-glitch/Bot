@@ -7,12 +7,7 @@ from contextlib import closing
 
 import psycopg2
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -24,18 +19,18 @@ from telegram.ext import (
 )
 
 
-# ==========================================
+# ==================================================
 # CONFIGURATION
-# ==========================================
+# ==================================================
 
-DB_URL = os.environ.get("DATABASE_URL")
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-
-if not DB_URL:
-    raise ValueError("DATABASE_URL မတွေ့ပါ။")
+DB_URL = os.environ.get("DATABASE_URL")
 
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN မတွေ့ပါ။")
+
+if not DB_URL:
+    raise ValueError("DATABASE_URL မတွေ့ပါ။")
 
 
 logging.basicConfig(
@@ -43,12 +38,12 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("DebtNote")
 
 
-# ==========================================
+# ==================================================
 # CONVERSATION STATES
-# ==========================================
+# ==================================================
 
 (
     ASK_NAME,
@@ -66,22 +61,49 @@ logger = logging.getLogger(__name__)
 ) = range(12)
 
 
-# ==========================================
-# DATABASE
-# ==========================================
+# ==================================================
+# DATABASE CONNECTION
+# ==================================================
 
 def get_conn():
     return psycopg2.connect(DB_URL)
 
 
-# ==========================================
-# DECIMAL HELPER
-# ==========================================
+def init_db():
+    with closing(get_conn()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS debts (
+                        id BIGSERIAL PRIMARY KEY,
+                        chat_id BIGINT NOT NULL,
+                        customer_name TEXT NOT NULL,
+                        amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                        item_name TEXT,
+                        quantity INTEGER,
+                        date TEXT,
+                        type TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_debts_chat_customer
+                    ON debts(chat_id, customer_name)
+                """)
+
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_debts_type
+                    ON debts(chat_id, type)
+                """)
+
+
+# ==================================================
+# DECIMAL FUNCTIONS
+# ==================================================
 
 def parse_amount(value):
-
     value = str(value).strip().replace(",", "")
-
     amount = Decimal(value)
 
     if not amount.is_finite():
@@ -91,95 +113,90 @@ def parse_amount(value):
 
 
 def format_money(value):
-    return f"{Decimal(str(value)):,.2f}".rstrip("0").rstrip(".")
+    amount = Decimal(str(value or 0))
+    return f"{amount:,.2f}".rstrip("0").rstrip(".")
 
 
-# ==========================================
+def same_name_sql():
+    return "LOWER(BTRIM(customer_name)) = LOWER(BTRIM(%s))"
+
+
+# ==================================================
 # MAIN MENU
-# ==========================================
+# ==================================================
 
 def get_main_menu():
 
     keyboard = [
-
         [
             InlineKeyboardButton(
-                "📝 အကြွေးထည့်မည်",
+                "📝 အကြွေးအသစ်ထည့်မည်",
                 callback_data="new_debt"
             )
         ],
-
         [
             InlineKeyboardButton(
                 "💰 ရှင်းငွေထည့်မည်",
                 callback_data="new_payment"
             )
         ],
-
         [
             InlineKeyboardButton(
                 "🔍 အမည်ဖြင့်ရှာမည်",
                 callback_data="search_customer"
             )
         ],
-
         [
             InlineKeyboardButton(
-                "📊 စုစုပေါင်းစာရင်း",
+                "📊 စုစုပေါင်းအကြွေး",
                 callback_data="total_summary"
             )
         ],
-
         [
             InlineKeyboardButton(
-                "🗑️ အကြွေးရှင်အမည် ဖျက်မည်",
+                "🗑️ အကြွေးရှင်အမည်ဖျက်မည်",
                 callback_data="delete_customer"
             )
         ]
-
     ]
 
     return InlineKeyboardMarkup(keyboard)
 
 
-# ==========================================
+# ==================================================
 # START
-# ==========================================
+# ==================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
     text = (
-        "🏪 DebtNote Bot မှ ကြိုဆိုပါတယ်။\n\n"
-        "လုပ်ဆောင်လိုတာကို ရွေးချယ်ပါ။"
+        "📒 DebtNote မှ ကြိုဆိုပါတယ်။\n\n"
+        "လုပ်ဆောင်လိုသော Menu ကို ရွေးချယ်ပါ။"
     )
 
     if update.message:
-
         await update.message.reply_text(
             text,
             reply_markup=get_main_menu()
         )
 
     elif update.callback_query:
-
         await update.callback_query.answer()
-
         await update.callback_query.edit_message_text(
             text,
             reply_markup=get_main_menu()
         )
 
 
-# ==========================================
+# ==================================================
 # START DEBT / PAYMENT
-# ==========================================
+# ==================================================
 
-async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_entry(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     context.user_data.clear()
@@ -193,22 +210,22 @@ async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_NAME
 
     await query.edit_message_text(
-        "👤 ရှင်းငွေဆပ်မယ့်သူရဲ့ အမည်ကို ရိုက်ထည့်ပါ။"
+        "👤 ရှင်းငွေဆပ်မည့်သူ၏ အမည်အပြည့်အစုံကို ရိုက်ထည့်ပါ။"
     )
 
     return ASK_PAY_NAME
 
 
-# ==========================================
-# NEW DEBT - NAME
-# ==========================================
+# ==================================================
+# ADD DEBT - NAME
+# ==================================================
 
-async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_name(update, context):
 
     name = update.message.text.strip()
 
     if not name:
-        await update.message.reply_text("အမည်ပြန်ထည့်ပါ။")
+        await update.message.reply_text("အမည်ထည့်ပါ။")
         return ASK_NAME
 
     context.user_data["name"] = name
@@ -220,14 +237,13 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_AMOUNT
 
 
-# ==========================================
-# NEW DEBT - AMOUNT
-# ==========================================
+# ==================================================
+# ADD DEBT - AMOUNT
+# ==================================================
 
-async def ask_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_amount(update, context):
 
     try:
-
         amount = parse_amount(update.message.text)
 
         if amount <= 0:
@@ -238,7 +254,7 @@ async def ask_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (ValueError, InvalidOperation):
 
         await update.message.reply_text(
-            "❌ မှန်ကန်တဲ့ ငွေပမာဏကို ရိုက်ထည့်ပါ။"
+            "❌ မှန်ကန်သော ပမာဏကို ပြန်ရိုက်ထည့်ပါ။"
         )
 
         return ASK_AMOUNT
@@ -250,16 +266,18 @@ async def ask_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_ITEM
 
 
-# ==========================================
-# NEW DEBT - ITEM
-# ==========================================
+# ==================================================
+# ADD DEBT - ITEM
+# ==================================================
 
-async def ask_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_item(update, context):
 
     item = update.message.text.strip()
 
     if not item:
-        await update.message.reply_text("ပစ္စည်းအမည် ထည့်ပါ။")
+        await update.message.reply_text(
+            "ပစ္စည်းအမည် ထည့်ပါ။"
+        )
         return ASK_ITEM
 
     context.user_data["item"] = item
@@ -271,14 +289,13 @@ async def ask_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_QTY
 
 
-# ==========================================
-# NEW DEBT - QUANTITY
-# ==========================================
+# ==================================================
+# ADD DEBT - QUANTITY
+# ==================================================
 
-async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_qty(update, context):
 
     try:
-
         qty = int(update.message.text.strip())
 
         if qty <= 0:
@@ -289,7 +306,7 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
 
         await update.message.reply_text(
-            "❌ မှန်ကန်တဲ့ အရေအတွက်ကို ရိုက်ထည့်ပါ။"
+            "❌ မှန်ကန်သော အရေအတွက်ကို ထည့်ပါ။"
         )
 
         return ASK_QTY
@@ -297,7 +314,7 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton(
-                "📅 ယနေ့ရက်စွဲကို သုံးမည်",
+                "📅 ယနေ့ရက်စွဲ",
                 callback_data="use_today"
             )
         ]
@@ -305,18 +322,18 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "📅 ရက်စွဲကို ကိုယ်တိုင်ရိုက်ထည့်နိုင်ပါတယ်။\n"
-        "သို့မဟုတ် အောက်ကခလုတ်ကို နှိပ်ပါ။",
+        "သို့မဟုတ် ယနေ့ရက်စွဲခလုတ်ကို နှိပ်ပါ။",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     return ASK_DATE
 
 
-# ==========================================
-# NEW DEBT - SAVE
-# ==========================================
+# ==================================================
+# ADD DEBT - SAVE
+# ==================================================
 
-async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_date(update, context):
 
     if update.callback_query:
 
@@ -325,27 +342,29 @@ async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date = datetime.now().strftime("%d.%m.%Y")
 
         await update.callback_query.edit_message_text(
-            f"📅 ရက်စွဲ - {date}"
+            f"📅 ရက်စွဲ: {date}"
         )
 
     else:
 
         date = update.message.text.strip()
 
+        if not date:
+            await update.message.reply_text(
+                "ရက်စွဲ ထည့်ပါ။"
+            )
+            return ASK_DATE
+
     data = context.user_data
 
     try:
 
         with closing(get_conn()) as conn:
-
             with conn:
-
                 with conn.cursor() as cur:
 
-                    cur.execute(
-                        """
-                        INSERT INTO debts
-                        (
+                    cur.execute("""
+                        INSERT INTO debts (
                             chat_id,
                             customer_name,
                             amount,
@@ -355,16 +374,14 @@ async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             type
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, 'credit')
-                        """,
-                        (
-                            update.effective_chat.id,
-                            data["name"],
-                            data["amount"],
-                            data["item"],
-                            data["qty"],
-                            date
-                        )
-                    )
+                    """, (
+                        update.effective_chat.id,
+                        data["name"],
+                        data["amount"],
+                        data["item"],
+                        data["qty"],
+                        date
+                    ))
 
         msg = (
             "✅ အကြွေးစာရင်း သိမ်းဆည်းပြီးပါပြီ။\n\n"
@@ -377,8 +394,7 @@ async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        logger.exception("Save debt error")
-
+        logger.exception("Add debt error")
         msg = f"❌ Database Error: {e}"
 
     await update.effective_chat.send_message(
@@ -391,75 +407,74 @@ async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==========================================
+# ==================================================
 # PAYMENT - CUSTOMER NAME
-# ==========================================
+# ==================================================
 
-async def ask_pay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_pay_name(update, context):
 
     name = update.message.text.strip()
+
+    if not name:
+        await update.message.reply_text("အမည်ထည့်ပါ။")
+        return ASK_PAY_NAME
 
     context.user_data["pay_name"] = name
 
     try:
 
         with closing(get_conn()) as conn:
-
             with conn.cursor() as cur:
 
-                cur.execute(
-                    """
-                    SELECT id, item_name, quantity, amount
+                cur.execute("""
+                    SELECT
+                        id,
+                        item_name,
+                        quantity,
+                        amount
                     FROM debts
                     WHERE chat_id = %s
-                    AND customer_name ILIKE %s
+                    AND LOWER(BTRIM(customer_name))
+                        = LOWER(BTRIM(%s))
                     AND type = 'credit'
                     AND amount > 0
-                    ORDER BY created_at ASC
-                    """,
-                    (
-                        update.effective_chat.id,
-                        f"%{name}%"
-                    )
-                )
+                    ORDER BY id ASC
+                """, (
+                    update.effective_chat.id,
+                    name
+                ))
 
                 rows = cur.fetchall()
 
         if not rows:
 
             await update.message.reply_text(
-                f"'{name}' အတွက် ကျန်ရှိတဲ့ အကြွေး မတွေ့ပါဘူး။",
+                f"'{name}' အတွက် လက်ကျန်အကြွေး မရှိပါဘူး။",
                 reply_markup=get_main_menu()
             )
 
             context.user_data.clear()
-
             return ConversationHandler.END
 
         keyboard = []
 
         for r in rows:
 
-            # Voucher ID တစ်ခုချင်းစီကို သီးခြားပြမယ်
-            btn_text = (
-                f"#{r[0]} | {r[1] or 'အကြွေး'} | "
-                f"{r[2] if r[2] is not None else 0} ခု | "
-                f"{format_money(r[3])} ကျပ်"
-            )
-
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        btn_text,
-                        callback_data=f"pay_{r[0]}"
-                    )
-                ]
-            )
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"Voucher #{r[0]} | "
+                    f"{r[1] or 'အကြွေး'} | "
+                    f"{r[2] or 0} ခု | "
+                    f"{format_money(r[3])} ကျပ်",
+                    callback_data=f"pay_{r[0]}"
+                )
+            ])
 
         await update.message.reply_text(
-            f"📋 {name} ရဲ့ အကြွေး Voucher ကို ရွေးပါ။\n\n"
-            "ပစ္စည်းအမည်နဲ့ အရေအတွက်တူနေရင်တောင် "
-            "ပမာဏနဲ့ Voucher ID ကိုကြည့်ပြီး ရွေးနိုင်ပါတယ်။",
+            f"👤 {name} ရဲ့ အကြွေး Voucher များ\n\n"
+            "ရှင်းချင်သော Voucher ကို ရွေးပါ။\n"
+            "ပစ္စည်းနှင့် အရေအတွက်တူလျှင်လည်း "
+            "Voucher ID နှင့် ပမာဏကို ကြည့်ပြီး ရွေးနိုင်ပါတယ်။",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -467,7 +482,7 @@ async def ask_pay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        logger.exception("Find payment debt error")
+        logger.exception("Payment search error")
 
         await update.message.reply_text(
             f"❌ Database Error: {e}",
@@ -475,18 +490,16 @@ async def ask_pay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         context.user_data.clear()
-
         return ConversationHandler.END
 
 
-# ==========================================
-# PAYMENT - SELECT VOUCHER
-# ==========================================
+# ==================================================
+# PAYMENT - SELECT ORIGINAL VOUCHER
+# ==================================================
 
-async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_pay_item(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     try:
@@ -494,33 +507,33 @@ async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         debt_id = int(query.data.split("_", 1)[1])
 
         with closing(get_conn()) as conn:
-
             with conn.cursor() as cur:
 
-                cur.execute(
-                    """
+                cur.execute("""
                     SELECT id, item_name, quantity, amount
                     FROM debts
                     WHERE id = %s
                     AND chat_id = %s
+                    AND LOWER(BTRIM(customer_name))
+                        = LOWER(BTRIM(%s))
                     AND type = 'credit'
                     AND amount > 0
-                    """,
-                    (
-                        debt_id,
-                        update.effective_chat.id
-                    )
-                )
+                """, (
+                    debt_id,
+                    update.effective_chat.id,
+                    context.user_data["pay_name"]
+                ))
 
                 row = cur.fetchone()
 
         if not row:
 
             await query.edit_message_text(
-                "❌ Voucher မတွေ့ပါ။ သို့မဟုတ် အကြွေးရှင်းပြီးပါပြီ။",
+                "❌ Voucher မတွေ့ပါ။",
                 reply_markup=get_main_menu()
             )
 
+            context.user_data.clear()
             return ConversationHandler.END
 
         context.user_data["pay_id"] = row[0]
@@ -530,11 +543,11 @@ async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = (
             f"🧾 Voucher #{row[0]}\n\n"
-            f"📦 ပစ္စည်း: {row[1] or 'အကြွေး'}\n"
+            f"📦 ပစ္စည်း: {row[1] or 'မရှိ'}\n"
             f"🔢 လက်ကျန်အရေအတွက်: {row[2] or 0}\n"
-            f"💰 လက်ကျန်ပမာဏ: {format_money(row[3])} ကျပ်\n\n"
-            "ရှင်းမယ့် အရေအတွက်ကို ရိုက်ထည့်ပါ။\n"
-            "(မရှိရင် 0 ရိုက်ပါ)"
+            f"💰 လက်ကျန်ငွေ: {format_money(row[3])} ကျပ်\n\n"
+            "ရှင်းမည့် အရေအတွက်ကို ရိုက်ထည့်ပါ။\n"
+            "(မရှိလျှင် 0 ရိုက်ပါ)"
         )
 
         await query.edit_message_text(text)
@@ -543,21 +556,22 @@ async def ask_pay_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        logger.exception("Select payment voucher error")
+        logger.exception("Select voucher error")
 
         await query.edit_message_text(
             f"❌ Error: {e}",
             reply_markup=get_main_menu()
         )
 
+        context.user_data.clear()
         return ConversationHandler.END
 
 
-# ==========================================
+# ==================================================
 # PAYMENT - QUANTITY
-# ==========================================
+# ==================================================
 
-async def ask_pay_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_pay_qty(update, context):
 
     try:
 
@@ -573,24 +587,24 @@ async def ask_pay_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
 
         await update.message.reply_text(
-            "❌ မှန်ကန်တဲ့ အရေအတွက်ကို ထည့်ပါ။\n"
+            "❌ အရေအတွက် မှားနေပါတယ်။\n"
             "လက်ကျန်အရေအတွက်ထက် မကျော်ရပါ။"
         )
 
         return ASK_PAY_QTY
 
     await update.message.reply_text(
-        "💰 ရှင်းမယ့် ငွေပမာဏ (ကျပ်) ကို ရိုက်ထည့်ပါ။"
+        "💰 ရှင်းမည့် ငွေပမာဏ (ကျပ်) ကို ရိုက်ထည့်ပါ။"
     )
 
     return ASK_PAY_AMT
 
 
-# ==========================================
-# PAYMENT - SAVE
-# ==========================================
+# ==================================================
+# PAYMENT - AMOUNT AND UPDATE ORIGINAL VOUCHER
+# ==================================================
 
-async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_pay_amt(update, context):
 
     try:
 
@@ -602,7 +616,7 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (ValueError, InvalidOperation):
 
         await update.message.reply_text(
-            "❌ မှန်ကန်တဲ့ ငွေပမာဏကို ရိုက်ထည့်ပါ။"
+            "❌ မှန်ကန်သော ရှင်းငွေပမာဏကို ထည့်ပါ။"
         )
 
         return ASK_PAY_AMT
@@ -610,136 +624,128 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
 
     debt_id = data["pay_id"]
-
     pay_qty = int(data["pay_qty"])
-
-    today_date = datetime.now().strftime("%d.%m.%Y")
+    chat_id = update.effective_chat.id
+    today = datetime.now().strftime("%d.%m.%Y")
 
     try:
 
         with closing(get_conn()) as conn:
-
             with conn:
-
                 with conn.cursor() as cur:
 
-                    # နောက်ဆုံးလက်ကျန်ကို Lock ချပြီး စစ်မယ်
-                    cur.execute(
-                        """
-                        SELECT item_name, quantity, amount
+                    # Original Voucher ကို Lock ချမယ်
+                    cur.execute("""
+                        SELECT
+                            customer_name,
+                            item_name,
+                            quantity,
+                            amount
                         FROM debts
                         WHERE id = %s
                         AND chat_id = %s
                         AND type = 'credit'
                         FOR UPDATE
-                        """,
-                        (
-                            debt_id,
-                            update.effective_chat.id
-                        )
-                    )
+                    """, (debt_id, chat_id))
 
                     row = cur.fetchone()
 
                     if not row:
                         raise ValueError("Voucher မတွေ့ပါ။")
 
-                    old_qty = int(row[1] or 0)
-
-                    old_amt = Decimal(str(row[2]))
+                    customer_name = row[0]
+                    item_name = row[1]
+                    old_qty = int(row[2] or 0)
+                    old_amt = Decimal(str(row[3]))
 
                     if old_amt <= 0:
-                        raise ValueError("အကြွေးရှင်းပြီးသားဖြစ်ပါတယ်။")
+                        raise ValueError("အကြွေးရှင်းပြီးသား ဖြစ်ပါတယ်။")
 
                     if pay_amt > old_amt:
                         raise ValueError(
-                            f"ရှင်းငွေက လက်ကျန်ထက် များနေပါတယ်။ "
-                            f"လက်ကျန် {format_money(old_amt)} ကျပ်"
+                            f"ရှင်းငွေက လက်ကျန်ထက် များနေပါတယ်။\n"
+                            f"လက်ကျန်: {format_money(old_amt)} ကျပ်"
                         )
 
                     if pay_qty > old_qty:
-                        raise ValueError("အရေအတွက် လက်ကျန်ထက် များနေပါတယ်။")
+                        raise ValueError("အရေအတွက် မမှန်ပါ။")
 
                     new_amt = old_amt - pay_amt
-
                     new_qty = old_qty - pay_qty
 
-                    # Payment History ကို သိမ်းမယ်
-                    cur.execute(
-                        """
-                        INSERT INTO debts
-                        (
+                    # Payment History သီးခြားသိမ်းမယ်
+                    # Search မှာ credit Voucher အဖြစ် မပြပါ။
+                    cur.execute("""
+                        INSERT INTO debts (
                             chat_id,
                             customer_name,
                             amount,
                             item_name,
+                            quantity,
                             date,
                             type
                         )
-                        VALUES (%s, %s, %s, %s, %s, 'payment')
-                        """,
-                        (
-                            update.effective_chat.id,
-                            data["pay_name"],
-                            pay_amt,
-                            row[0],
-                            today_date
-                        )
-                    )
+                        VALUES (%s, %s, %s, %s, %s, %s, 'payment')
+                    """, (
+                        chat_id,
+                        customer_name,
+                        pay_amt,
+                        item_name,
+                        pay_qty,
+                        today
+                    ))
 
-                    # အကြွေးအပြည့်ရှင်းပြီးပါက 0 အဖြစ်ထားမယ်
+                    # မူလ Voucher ကိုပဲ Update လုပ်မယ်
                     if new_amt == Decimal("0"):
 
-                        cur.execute(
-                            """
+                        new_qty = 0
+
+                        cur.execute("""
                             UPDATE debts
                             SET amount = 0,
                                 quantity = 0
                             WHERE id = %s
                             AND chat_id = %s
-                            """,
-                            (
-                                debt_id,
-                                update.effective_chat.id
-                            )
-                        )
-
-                        msg = (
-                            "✅ အကြွေးအပြည့်ရှင်းပြီးပါပြီ။\n\n"
-                            f"👤 အမည်: {data['pay_name']}\n"
-                            f"📦 ပစ္စည်း: {row[0]}\n"
-                            f"🔢 အရေအတွက်: 0\n"
-                            f"💰 လက်ကျန်: 0 ကျပ်\n\n"
-                            "Voucher ကို 0 အဖြစ် သိမ်းထားပြီး "
-                            "လက်ကျန်အကြွေးစာရင်းမှာ မပြတော့ပါဘူး။"
-                        )
+                        """, (debt_id, chat_id))
 
                     else:
 
-                        cur.execute(
-                            """
+                        cur.execute("""
                             UPDATE debts
                             SET amount = %s,
                                 quantity = %s
                             WHERE id = %s
                             AND chat_id = %s
-                            """,
-                            (
-                                new_amt,
-                                new_qty,
-                                debt_id,
-                                update.effective_chat.id
-                            )
-                        )
+                        """, (
+                            new_amt,
+                            new_qty,
+                            debt_id,
+                            chat_id
+                        ))
 
-                        msg = (
-                            "✅ ရှင်းငွေ သိမ်းဆည်းပြီးပါပြီ။\n\n"
-                            f"👤 အမည်: {data['pay_name']}\n"
-                            f"📦 ပစ္စည်း: {row[0]}\n"
-                            f"🔢 ကျန်အရေအတွက်: {new_qty}\n"
-                            f"💰 ရှင်းငွေ: {format_money(pay_amt)} ကျပ်\n"
-                            f"💵 ကျန်ငွေ: {format_money(new_amt)} ကျပ်"
-                        )
+        if new_amt == Decimal("0"):
+
+            msg = (
+                "✅ အကြွေးအပြည့်ရှင်းပြီးပါပြီ။\n\n"
+                f"👤 အမည်: {customer_name}\n"
+                f"📦 ပစ္စည်း: {item_name}\n"
+                f"🔢 အရေအတွက်: 0\n"
+                f"💰 လက်ကျန်: 0 ကျပ်\n\n"
+                f"🧾 Voucher #{debt_id} ကို "
+                "Active အကြွေးစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။"
+            )
+
+        else:
+
+            msg = (
+                "✅ ရှင်းငွေ သိမ်းဆည်းပြီးပါပြီ။\n\n"
+                f"👤 အမည်: {customer_name}\n"
+                f"🧾 Voucher #{debt_id}\n"
+                f"📦 ပစ္စည်း: {item_name}\n"
+                f"🔢 ကျန်အရေအတွက်: {new_qty}\n"
+                f"💰 ရှင်းငွေ: {format_money(pay_amt)} ကျပ်\n"
+                f"💵 ကျန်ငွေ: {format_money(new_amt)} ကျပ်"
+            )
 
         await update.message.reply_text(
             msg,
@@ -748,10 +754,10 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        logger.exception("Payment error")
+        logger.exception("Payment save error")
 
         await update.message.reply_text(
-            f"❌ ရှင်းငွေ မအောင်မြင်ပါ။\n{str(e)}",
+            f"❌ ရှင်းငွေ မအောင်မြင်ပါ။\n\n{str(e)}",
             reply_markup=get_main_menu()
         )
 
@@ -760,91 +766,101 @@ async def ask_pay_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==========================================
+# ==================================================
 # SEARCH CUSTOMER
-# ==========================================
+# ==================================================
 
-async def search_customer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_customer(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     context.user_data.clear()
 
     await query.edit_message_text(
-        "🔍 ရှာချင်တဲ့ ဝယ်သူအမည်ကို ရိုက်ထည့်ပါ။"
+        "🔍 ရှာလိုသော အကြွေးရှင်၏ အမည်အပြည့်အစုံကို ရိုက်ထည့်ပါ။\n\n"
+        "ဥပမာ - Nay Min Tun\n\n"
+        "Nay သို့မဟုတ် Min တစ်လုံးတည်းဖြင့် "
+        "ရှာဖွေ၍မရပါ။"
     )
 
     return ASK_SEARCH
 
 
-# ==========================================
-# CUSTOMER DETAILS
-# ==========================================
+# ==================================================
+# SHOW CUSTOMER DATA - ACTIVE DEBT ONLY
+# ==================================================
 
-async def show_customer_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_customer_data(update, context):
 
     name = update.message.text.strip()
+
+    if not name:
+        await update.message.reply_text(
+            "အမည်အပြည့်အစုံ ထည့်ပါ။"
+        )
+        return ASK_SEARCH
 
     try:
 
         with closing(get_conn()) as conn:
-
             with conn.cursor() as cur:
 
-                cur.execute(
-                    """
-                    SELECT type, amount, item_name, quantity, date
+                cur.execute("""
+                    SELECT
+                        id,
+                        item_name,
+                        quantity,
+                        amount,
+                        date
                     FROM debts
                     WHERE chat_id = %s
-                    AND customer_name ILIKE %s
-                    ORDER BY created_at ASC
-                    """,
-                    (
-                        update.effective_chat.id,
-                        f"%{name}%"
-                    )
-                )
+                    AND LOWER(BTRIM(customer_name))
+                        = LOWER(BTRIM(%s))
+                    AND type = 'credit'
+                    AND amount > 0
+                    ORDER BY id ASC
+                """, (
+                    update.effective_chat.id,
+                    name
+                ))
 
                 rows = cur.fetchall()
 
         if not rows:
 
             await update.message.reply_text(
-                "မှတ်တမ်း မတွေ့ပါဘူး။",
+                f"'{name}' အတွက် လက်ကျန်အကြွေး မရှိပါဘူး။",
                 reply_markup=get_main_menu()
             )
 
             return ConversationHandler.END
 
-        text = f"👤 {name} ရဲ့ အသေးစိတ်စာရင်း\n"
+        text = f"👤 {name} ရဲ့ အကြွေးစာရင်း\n"
         text += "━━━━━━━━━━━━━━━━\n"
 
-        for i, r in enumerate(rows, 1):
+        total = Decimal("0")
 
-            if r[0] == "credit":
+        for r in rows:
 
-                text += (
-                    f"🧾 Voucher {i} (အကြွေး)\n"
-                    f"├ ပစ္စည်း: {r[2] or 'မရှိ'}\n"
-                    f"├ အရေအတွက်: {r[3] or 0}\n"
-                    f"├ ပမာဏ: {format_money(r[1])} ကျပ်\n"
-                    f"└ ရက်စွဲ: {r[4]}\n\n"
-                )
+            amount = Decimal(str(r[3]))
+            total += amount
 
-            else:
+            text += (
+                f"🧾 Voucher #{r[0]}\n"
+                f"├ ပစ္စည်း: {r[1] or 'မရှိ'}\n"
+                f"├ အရေအတွက်: {r[2] or 0}\n"
+                f"├ လက်ကျန်: {format_money(amount)} ကျပ်\n"
+                f"└ ရက်စွဲ: {r[4] or 'မရှိ'}\n\n"
+            )
 
-                text += (
-                    f"💰 Voucher {i} (ရှင်းငွေ)\n"
-                    f"├ ပစ္စည်း: {r[2] or 'မရှိ'}\n"
-                    f"├ ရှင်းငွေ: {format_money(r[1])} ကျပ်\n"
-                    f"└ ရက်စွဲ: {r[4]}\n\n"
-                )
+        text += "━━━━━━━━━━━━━━━━\n"
+        text += (
+            f"💰 စုစုပေါင်းအကြွေး: "
+            f"{format_money(total)} ကျပ်"
+        )
 
-        # Telegram message length ကန့်သတ်ချက်အတွက် ခွဲပို့မယ်
-        chunks = []
-
+        # Telegram Message Limit အတွက် ခွဲပို့မယ်
         while len(text) > 3500:
 
             cut = text.rfind("\n", 0, 3500)
@@ -852,24 +868,18 @@ async def show_customer_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if cut <= 0:
                 cut = 3500
 
-            chunks.append(text[:cut])
+            await update.message.reply_text(text[:cut])
 
             text = text[cut:]
 
-        chunks.append(text)
-
-        for chunk in chunks:
-
-            await update.message.reply_text(chunk)
-
         await update.message.reply_text(
-            "လုပ်ဆောင်ချက် ရွေးချယ်ပါ။",
+            text,
             reply_markup=get_main_menu()
         )
 
     except Exception as e:
 
-        logger.exception("Customer search error")
+        logger.exception("Search customer error")
 
         await update.message.reply_text(
             f"❌ Error: {e}",
@@ -879,36 +889,31 @@ async def show_customer_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ==========================================
-# TOTAL SUMMARY
-# ==========================================
+# ==================================================
+# TOTAL DEBT SUMMARY
+# ==================================================
 
-async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def total_summary(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     try:
 
         with closing(get_conn()) as conn:
-
             with conn.cursor() as cur:
 
-                cur.execute(
-                    """
+                cur.execute("""
                     SELECT
-                        customer_name,
-                        SUM(amount) AS total_balance
+                        MIN(customer_name) AS customer_name,
+                        SUM(amount) AS balance
                     FROM debts
                     WHERE chat_id = %s
                     AND type = 'credit'
-                    GROUP BY customer_name
+                    GROUP BY LOWER(BTRIM(customer_name))
                     HAVING SUM(amount) > 0
-                    ORDER BY customer_name
-                    """,
-                    (query.message.chat.id,)
-                )
+                    ORDER BY MIN(customer_name)
+                """, (query.message.chat.id,))
 
                 rows = cur.fetchall()
 
@@ -921,24 +926,24 @@ async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        text = "📊 စုစုပေါင်း လက်ကျန်အကြွေး\n"
+        text = "📊 စုစုပေါင်း အကြွေးစာရင်း\n"
         text += "━━━━━━━━━━━━━━━━\n"
 
         grand_total = Decimal("0")
 
         for r in rows:
 
-            balance = Decimal(str(r[1] or "0"))
-
+            balance = Decimal(str(r[1] or 0))
             grand_total += balance
 
             text += (
-                f"👤 {r[0]}: {format_money(balance)} ကျပ်\n"
+                f"👤 {r[0]}: "
+                f"{format_money(balance)} ကျပ်\n"
             )
 
+        text += "━━━━━━━━━━━━━━━━\n"
         text += (
-            "━━━━━━━━━━━━━━━━\n"
-            f"💰 စုစုပေါင်း ရရန်ကျန်ငွေ: "
+            f"💰 စုစုပေါင်းရရန်ကျန်: "
             f"{format_money(grand_total)} ကျပ်"
         )
 
@@ -957,17 +962,13 @@ async def total_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ==========================================
-# DELETE CUSTOMER - LIST ZERO BALANCE
-# ==========================================
+# ==================================================
+# DELETE CUSTOMER - ZERO BALANCE LIST
+# ==================================================
 
-async def delete_customer_menu(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def delete_customer_menu(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     context.user_data.clear()
@@ -975,34 +976,39 @@ async def delete_customer_menu(
     try:
 
         with closing(get_conn()) as conn:
-
             with conn.cursor() as cur:
 
-                cur.execute(
-                    """
+                cur.execute("""
                     SELECT
-                        customer_name,
-                        SUM(amount) AS balance
+                        MIN(customer_name) AS customer_name,
+                        SUM(
+                            CASE
+                                WHEN type = 'credit'
+                                THEN COALESCE(amount, 0)
+                                ELSE 0
+                            END
+                        ) AS balance
                     FROM debts
                     WHERE chat_id = %s
-                    AND type = 'credit'
-                    GROUP BY customer_name
-                    HAVING
-                        SUM(amount) = 0
-                        AND BOOL_AND(amount = 0)
-                    ORDER BY customer_name
-                    """,
-                    (query.message.chat.id,)
-                )
+                    GROUP BY LOWER(BTRIM(customer_name))
+                    HAVING SUM(
+                        CASE
+                            WHEN type = 'credit'
+                            THEN COALESCE(amount, 0)
+                            ELSE 0
+                        END
+                    ) = 0
+                    ORDER BY MIN(customer_name)
+                """, (query.message.chat.id,))
 
                 rows = cur.fetchall()
 
         if not rows:
 
             await query.edit_message_text(
-                "🗑️ ဖျက်နိုင်တဲ့ အကြွေးရှင် မရှိသေးပါဘူး။\n\n"
-                "လက်ကျန် 0 ကျပ် ဖြစ်နေတဲ့သူတွေမှသာ "
-                "ဒီစာရင်းထဲမှာ ပေါ်လာမှာဖြစ်ပါတယ်။",
+                "🗑️ ဖျက်နိုင်သော အကြွေးရှင် မရှိသေးပါဘူး။\n\n"
+                "စုစုပေါင်းအကြွေး 0 ကျပ် ဖြစ်သူများသာ "
+                "ဒီစာရင်းမှာ ပေါ်လာမှာပါ။",
                 reply_markup=get_main_menu()
             )
 
@@ -1014,31 +1020,27 @@ async def delete_customer_menu(
 
         keyboard = []
 
-        for i, row in enumerate(rows):
+        for i, r in enumerate(rows):
 
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        f"👤 {row[0]} : 0 ကျပ်",
-                        callback_data=f"delcust_{i}"
-                    )
-                ]
-            )
-
-        keyboard.append(
-            [
+            keyboard.append([
                 InlineKeyboardButton(
-                    "🔙 ပင်မစာမျက်နှာ",
-                    callback_data="delete_back"
+                    f"👤 {r[0]} : 0 ကျပ်",
+                    callback_data=f"delcust_{i}"
                 )
-            ]
-        )
+            ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔙 ပင်မစာမျက်နှာ",
+                callback_data="delete_back"
+            )
+        ])
 
         await query.edit_message_text(
             "🗑️ အကြွေးရှင်အမည် ဖျက်မည်\n\n"
-            "အောက်ပါသူများသည် လက်ကျန်အကြွေး 0 ကျပ် "
-            "ဖြစ်နေသူများသာ ဖြစ်ပါတယ်။\n\n"
-            "ဖျက်ချင်တဲ့ အမည်ကို ရွေးပါ။",
+            "စုစုပေါင်းအကြွေး 0 ကျပ် ဖြစ်နေသူများသာ "
+            "ဒီစာရင်းထဲမှာ ပါဝင်ပါတယ်။\n\n"
+            "ဖျက်လိုသောအမည်ကို ရွေးပါ။",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -1046,7 +1048,7 @@ async def delete_customer_menu(
 
     except Exception as e:
 
-        logger.exception("Delete customer list error")
+        logger.exception("Delete list error")
 
         await query.edit_message_text(
             f"❌ Error: {e}",
@@ -1056,17 +1058,13 @@ async def delete_customer_menu(
         return ConversationHandler.END
 
 
-# ==========================================
-# DELETE CUSTOMER - CONFIRM
-# ==========================================
+# ==================================================
+# DELETE CUSTOMER - SELECT NAME
+# ==================================================
 
-async def select_delete_customer(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def select_delete_customer(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     if query.data == "delete_back":
@@ -1074,7 +1072,7 @@ async def select_delete_customer(
         context.user_data.clear()
 
         await query.edit_message_text(
-            "🏪 ပင်မစာမျက်နှာ",
+            "📒 DebtNote ပင်မစာမျက်နှာ",
             reply_markup=get_main_menu()
         )
 
@@ -1087,37 +1085,34 @@ async def select_delete_customer(
         names = context.user_data.get("delete_names", [])
 
         if index < 0 or index >= len(names):
-            raise ValueError("ရွေးချယ်မှု မမှန်ကန်ပါ။")
+            raise ValueError("အမည်ရွေးချယ်မှု မမှန်ပါ။")
 
         name = names[index]
 
         context.user_data["delete_name"] = name
 
         keyboard = [
-
             [
                 InlineKeyboardButton(
                     "✅ အတည်ပြုပြီး ဖျက်မည်",
                     callback_data="confirm_delete_yes"
                 )
             ],
-
             [
                 InlineKeyboardButton(
                     "❌ မဖျက်တော့ပါ",
                     callback_data="confirm_delete_no"
                 )
             ]
-
         ]
 
         await query.edit_message_text(
-            "⚠️ ဖျက်ရန် အတည်ပြုပါ။\n\n"
+            "⚠️ အပြီးဖျက်ရန် အတည်ပြုပါ။\n\n"
             f"👤 အမည်: {name}\n"
-            "💰 လက်ကျန်: 0 ကျပ်\n\n"
-            "ဒီသူရဲ့ အကြွေး Voucher နဲ့ ရှင်းငွေ "
-            "မှတ်တမ်းအားလုံးကို အပြီးဖျက်မှာ ဖြစ်ပါတယ်။\n\n"
-            "ပြန်လည်ရယူလို့ မရနိုင်ပါ။",
+            "💰 စုစုပေါင်းအကြွေး: 0 ကျပ်\n\n"
+            "ဖျက်လိုက်ပါက သက်ဆိုင်ရာ အကြွေး Voucher "
+            "နှင့် ရှင်းငွေ History အားလုံး ပျက်သွားပါမည်။\n\n"
+            "ပြန်လည်ရယူ၍ မရနိုင်ပါ။",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -1125,7 +1120,7 @@ async def select_delete_customer(
 
     except Exception as e:
 
-        logger.exception("Select delete customer error")
+        logger.exception("Select delete error")
 
         await query.edit_message_text(
             f"❌ Error: {e}",
@@ -1137,17 +1132,13 @@ async def select_delete_customer(
         return ConversationHandler.END
 
 
-# ==========================================
-# DELETE CUSTOMER - FINAL ACTION
-# ==========================================
+# ==================================================
+# DELETE CUSTOMER - CONFIRM
+# ==================================================
 
-async def confirm_delete_customer(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def confirm_delete_customer(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     if query.data == "confirm_delete_no":
@@ -1166,12 +1157,11 @@ async def confirm_delete_customer(
     if not name:
 
         await query.edit_message_text(
-            "❌ အမည် မတွေ့ပါ။ ပြန်စမ်းပါ။",
+            "❌ အမည်မတွေ့ပါ။",
             reply_markup=get_main_menu()
         )
 
         context.user_data.clear()
-
         return ConversationHandler.END
 
     chat_id = update.effective_chat.id
@@ -1179,58 +1169,60 @@ async def confirm_delete_customer(
     try:
 
         with closing(get_conn()) as conn:
-
             with conn:
-
                 with conn.cursor() as cur:
 
-                    # နောက်ဆုံးအခြေအနေကို Lock ချပြီး ထပ်စစ်မယ်
-                    cur.execute(
-                        """
-                        SELECT amount
+                    # အဲဒီအမည်ရဲ့ မှတ်တမ်းအားလုံး Lock ချမယ်
+                    cur.execute("""
+                        SELECT id, type, amount
                         FROM debts
                         WHERE chat_id = %s
-                        AND customer_name = %s
-                        AND type = 'credit'
+                        AND LOWER(BTRIM(customer_name))
+                            = LOWER(BTRIM(%s))
                         FOR UPDATE
-                        """,
-                        (chat_id, name)
-                    )
+                    """, (chat_id, name))
 
-                    rows = cur.fetchall()
+                    records = cur.fetchall()
 
-                    if not rows:
-
+                    if not records:
                         raise ValueError(
-                            "အကြွေးစာရင်း မတွေ့ပါ။"
+                            "အကြွေးရှင်စာရင်း မတွေ့ပါ။"
                         )
 
-                    # Credit Voucher အားလုံး 0 ဖြစ်မှသာ ဖျက်မယ်
-                    if not all(
-                        Decimal(str(r[0])) == Decimal("0")
-                        for r in rows
-                    ):
+                    # Credit Voucher များကိုသာ စစ်မယ်
+                    credit_rows = [
+                        r for r in records
+                        if r[1] == "credit"
+                    ]
 
+                    # အကြွေးလက်ကျန်ရှိလျှင် ဖျက်ခွင့်မပြု
+                    has_balance = any(
+                        Decimal(str(r[2] or 0)) != Decimal("0")
+                        for r in credit_rows
+                    )
+
+                    if has_balance:
                         raise ValueError(
                             "ဒီအကြွေးရှင်မှာ လက်ကျန်ငွေ ရှိနေသေးပါတယ်။"
                         )
 
-                    # Credit + Payment အားလုံးကို ဖျက်မယ်
-                    cur.execute(
-                        """
+                    # Credit 0 ဖြစ်ပြီးသား သို့မဟုတ်
+                    # ယခင် Version က Credit ဖျက်ပြီး
+                    # Payment History ပဲကျန်သူကို ဖျက်နိုင်မယ်။
+                    cur.execute("""
                         DELETE FROM debts
                         WHERE chat_id = %s
-                        AND customer_name = %s
-                        """,
-                        (chat_id, name)
-                    )
+                        AND LOWER(BTRIM(customer_name))
+                            = LOWER(BTRIM(%s))
+                    """, (chat_id, name))
 
                     deleted_count = cur.rowcount
 
         await query.edit_message_text(
-            "✅ အကြွေးရှင်စာရင်း ဖျက်ပြီးပါပြီ။\n\n"
+            "✅ အကြွေးရှင်ကို အပြီးဖျက်ပြီးပါပြီ။\n\n"
             f"👤 အမည်: {name}\n"
-            f"🗑️ ဖျက်လိုက်သော မှတ်တမ်း: {deleted_count} ခု",
+            f"🗑️ ဖျက်လိုက်သော မှတ်တမ်း: {deleted_count} ခု\n\n"
+            "Voucher နှင့် Payment History အားလုံး ဖျက်ပြီးပါပြီ။",
             reply_markup=get_main_menu()
         )
 
@@ -1248,11 +1240,11 @@ async def confirm_delete_customer(
     return ConversationHandler.END
 
 
-# ==========================================
+# ==================================================
 # CANCEL
-# ==========================================
+# ==================================================
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update, context):
 
     context.user_data.clear()
 
@@ -1264,26 +1256,25 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==========================================
+# ==================================================
 # ERROR HANDLER
-# ==========================================
+# ==================================================
 
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def error_handler(update, context):
 
     logger.error(
-        "Telegram update error:",
+        "Unhandled Telegram error:",
         exc_info=context.error
     )
 
 
-# ==========================================
+# ==================================================
 # MAIN APPLICATION
-# ==========================================
+# ==================================================
 
 def main():
+
+    init_db()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1362,7 +1353,7 @@ def main():
             ASK_PAY_ITEM: [
                 CallbackQueryHandler(
                     ask_pay_item,
-                    pattern="^pay_"
+                    pattern="^pay_[0-9]+$"
                 )
             ],
 
@@ -1424,14 +1415,14 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("Debt Ledger Bot Started Successfully")
+    logger.info("DebtNote Bot Started Successfully")
 
     app.run_polling()
 
 
-# ==========================================
+# ==================================================
 # RUN
-# ==========================================
+# ==================================================
 
 if __name__ == "__main__":
     main()
